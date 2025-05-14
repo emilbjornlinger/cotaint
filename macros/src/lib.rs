@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream;
-use quote::quote;
+use proc_macro2::TokenStream as TokenStream2;
+use quote::{quote, ToTokens};
 use std::collections::HashSet;
 use std::iter::FromIterator;
 use syn::{
@@ -30,7 +30,7 @@ fn impl_source_macro(expr: &syn::Expr) -> TokenStream {
 pub fn taint_block(input: TokenStream) -> TokenStream {
     let block = parse_macro_input!(input as Block);
 
-    let generated_closure = taint_block_helper(&block);
+    let generated_closure: TokenStream2 = taint_block_helper(&block).into();
 
     quote! {
         ::cotaint::taint::closure_guard<_>(
@@ -45,7 +45,7 @@ pub fn taint_block(input: TokenStream) -> TokenStream {
 pub fn taint_block_return(input: TokenStream) -> TokenStream {
     let block = parse_macro_input!(input as Block);
 
-    let generated_closure = taint_block_helper(&block);
+    let generated_closure: TokenStream2 = taint_block_helper(&block).into();
 
     quote! {
         ::cotaint::taint::closure_guard_return<_>(
@@ -57,11 +57,7 @@ pub fn taint_block_return(input: TokenStream) -> TokenStream {
 
 // TODO Write docs
 fn taint_block_helper(input_block: &Block) -> TokenStream {
-    let body: TokenStream = match &*block {
-        Expr::Block(b) => expand_block(&b.block).into(),
-        _ => quote! {compile_error!("Expected block in taint_block* macro")}.into(),
-    };
-
+    let body: TokenStream2 = expand_block(input_block).into();
     let generated_code = if cfg!(debug_assertions) {
         quote! {
             (|| -> _ {
@@ -89,7 +85,7 @@ fn expand_block(block: &syn::Block) -> TokenStream {
     let token_streams: Vec<TokenStream> = block
         .stmts
         .iter()
-        .map(|stmt: &Stmt| -> TokenStream {
+        .map(|stmt: &Stmt| -> TokenStream2 {
             match stmt {
                 Stmt::Local(local_expr) => match &local_expr.init {
                     // Check the right-hand side of a store.
@@ -127,7 +123,7 @@ fn expand_block(block: &syn::Block) -> TokenStream {
 }
 
 // TODO Write docs
-fn expand_expr(expr: &Expr) -> TokenStream {
+fn expand_expr(expr: &Expr) -> TokenStream2 {
     match expr {
         Expr::Array(expr_array) => {
             let elements = comma_separate(expr_array.elems.iter().map(|expr| expand_expr(expr)));
@@ -142,7 +138,7 @@ fn expand_expr(expr: &Expr) -> TokenStream {
                 expr_call
                     .args
                     .iter()
-                    .map(|arg: &syn::Expr| -> TokenStream { expand_expr(arg) }),
+                    .map(|arg: &syn::Expr| -> TokenStream2 { expand_expr(arg) }),
             );
             if is_call_to(expr_call, "extract_taint_ref") {
                 quote! {
@@ -185,16 +181,16 @@ fn expand_expr(expr: &Expr) -> TokenStream {
         Expr::Block(expr_block) => expand_block(&expr_block.block).into(),
         Expr::Continue(continue_stmt) => continue_stmt.into_token_stream(),
         Expr::Assign(assign_expr) => {
-            let lhs: TokenStream = expand_expr(&assign_expr.left).into();
-            let rhs: TokenStream = expand_expr(&assign_expr.right).into();
+            let lhs: TokenStream2 = expand_expr(&assign_expr.left).into();
+            let rhs: TokenStream2 = expand_expr(&assign_expr.right).into();
             // Don't need not_mut_secret here since it's already in the duplicate (i.e., check_expr) path
             quote! {
                 (#lhs = #rhs)
             }
         }
         Expr::AssignOp(assign_op_expr) => {
-            let lhs: TokenStream = expand_expr(&assign_op_expr.left).into();
-            let rhs: TokenStream = expand_expr(&assign_op_expr.right).into();
+            let lhs: TokenStream2 = expand_expr(&assign_op_expr.left).into();
+            let rhs: TokenStream2 = expand_expr(&assign_op_expr.right).into();
             let op = assign_op_expr.op;
             // Don't need not_mut_secret here since the duplicate (i.e., check_expr) path ensures built-in numeric/string types
             quote! {
@@ -202,12 +198,12 @@ fn expand_expr(expr: &Expr) -> TokenStream {
             }
         }
         Expr::MethodCall(method_call_expr) => {
-            let receiver: TokenStream = expand_expr(&method_call_expr.receiver).into();
+            let receiver: TokenStream2 = expand_expr(&method_call_expr.receiver).into();
             let args = comma_separate(
                 method_call_expr
                     .args
                     .iter()
-                    .map(|arg: &syn::Expr| -> TokenStream { expand_expr(arg) }),
+                    .map(|arg: &syn::Expr| -> TokenStream2 { expand_expr(arg) }),
             );
             let method = &method_call_expr.method;
             let turbofish = &method_call_expr.turbofish;
@@ -218,7 +214,7 @@ fn expand_expr(expr: &Expr) -> TokenStream {
         }
         Expr::If(expr_if) => {
             let condition = expand_expr(&*expr_if.cond);
-            let then_block: TokenStream = expand_block(&expr_if.then_branch).into();
+            let then_block: TokenStream2 = expand_block(&expr_if.then_branch).into();
             let else_branch = match &expr_if.else_branch {
                 Some(block) => expand_expr(&*block.1),
                 None => quote! {},
@@ -246,8 +242,8 @@ fn expand_expr(expr: &Expr) -> TokenStream {
         Expr::ForLoop(for_loop) => {
             // TODO: Does #pat need expansion?
             let pat = for_loop.pat.clone().into_token_stream();
-            let expr: TokenStream = expand_expr(&*for_loop.expr).into();
-            let body: TokenStream = expand_block(&for_loop.body).into();
+            let expr: TokenStream2 = expand_expr(&*for_loop.expr).into();
+            let body: TokenStream2 = expand_block(&for_loop.body).into();
             quote! {
                 for #pat in #expr {
                     #body
@@ -255,8 +251,8 @@ fn expand_expr(expr: &Expr) -> TokenStream {
             }
         }
         Expr::Index(idx) => {
-            let expr: TokenStream = expand_expr(&*idx.expr).into();
-            let index: TokenStream = expand_expr(&*idx.index).into();
+            let expr: TokenStream2 = expand_expr(&*idx.expr).into();
+            let index: TokenStream2 = expand_expr(&*idx.index).into();
             quote! {
                 #expr[#index]
             }
@@ -378,15 +374,15 @@ fn expand_expr(expr: &Expr) -> TokenStream {
                 tuple
                     .elems
                     .iter()
-                    .map(|arg: &syn::Expr| -> TokenStream { expand_expr(arg) }),
+                    .map(|arg: &syn::Expr| -> TokenStream2 { expand_expr(arg) }),
             );
             quote! {
                 (#args)
             }
         }
         Expr::While(while_loop) => {
-            let cond: TokenStream = expand_expr(&*while_loop.cond).into();
-            let body: TokenStream = expand_block(&while_loop.body).into();
+            let cond: TokenStream2 = expand_expr(&*while_loop.cond).into();
+            let body: TokenStream2 = expand_block(&while_loop.body).into();
             quote! {
                 while #cond {
                     #body
@@ -470,15 +466,15 @@ fn is_call_to(call: &syn::ExprCall, path: &str) -> bool {
 }
 
 // TODO Write docs
-fn comma_separate<T: Iterator<Item = TokenStream>>(ts: T) -> TokenStream {
+fn comma_separate<T: Iterator<Item = TokenStream2>>(ts: T) -> TokenStream2 {
     ts.fold(
-        TokenStream::new(),
-        |acc: TokenStream, token: TokenStream| -> TokenStream {
+        TokenStream2::new(),
+        |acc: TokenStream2, token: TokenStream2| -> TokenStream2 {
             if acc.is_empty() {
                 token
             } else {
-                let ba: TokenStream = acc.into();
-                let bt: TokenStream = token.into();
+                let ba: TokenStream2 = acc.into();
+                let bt: TokenStream2 = token.into();
                 quote! {#ba, #bt}
             }
         },
