@@ -1,5 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
+use syn::{parse_macro_input, Expr};
 
 #[proc_macro]
 pub fn taint_block(input: TokenStream) -> TokenStream {
@@ -42,4 +43,36 @@ fn impl_source_macro(expr: &syn::Expr) -> TokenStream {
         ::cotaint::taint::Tainted::<_>::new(#expr)
     };
     gen.into()
+}
+
+#[proc_macro]
+pub fn taint_block(tokens: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(tokens as syn::Expr);
+
+    let code = taint_block_helper(&input);
+
+    code
+}
+
+fn taint_block_helper(expr: &syn::Expr) -> TokenStream {
+
+    match expr {
+        Expr::Block(expr_block) => {
+            expand_block(expr_block)
+        }
+        _ => expand_expr(expr)
+    }
+
+}
+
+fn expand_block(expr_block: &syn::ExprBlock) -> TokenStream {
+
+
+
+
+    TokenStream::new()
+}
+
+fn expand_expr(expr: &Expr) -> TokenStream {
+    TokenStream::new()
 }
