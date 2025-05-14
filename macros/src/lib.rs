@@ -20,7 +20,9 @@ pub fn source(input: TokenStream) -> TokenStream {
 
 fn impl_source_macro(expr: &syn::Expr) -> TokenStream {
     let gen = quote! {
-        ::cotaint::taint::Tainted::<_>::new(#expr)
+        unsafe {
+            ::cotaint::taint::Tainted::<_>::new(#expr)
+        }
     };
     gen.into()
 }
@@ -33,7 +35,7 @@ pub fn taint_block(input: TokenStream) -> TokenStream {
     let generated_closure: TokenStream2 = taint_block_helper(&block).into();
 
     quote! {
-        ::cotaint::taint::closure_guard<_>(
+        ::cotaint::taint::closure_guard::<_>(
             #generated_closure
         )
     }
@@ -48,7 +50,7 @@ pub fn taint_block_return(input: TokenStream) -> TokenStream {
     let generated_closure: TokenStream2 = taint_block_helper(&block).into();
 
     quote! {
-        ::cotaint::taint::closure_guard_return<_>(
+        ::cotaint::taint::closure_guard_return::<_, _>(
             #generated_closure
         )
     }
@@ -82,7 +84,7 @@ fn taint_block_helper(input_block: &Block) -> TokenStream {
 
 // TODO Write docs
 fn expand_block(block: &syn::Block) -> TokenStream {
-    let token_streams: Vec<TokenStream> = block
+    let token_streams: Vec<TokenStream2> = block
         .stmts
         .iter()
         .map(|stmt: &Stmt| -> TokenStream2 {
@@ -113,7 +115,7 @@ fn expand_block(block: &syn::Block) -> TokenStream {
             }
         })
         .collect();
-    let stream: TokenStream = TokenStream::from_iter(token_streams);
+    let stream: TokenStream2 = TokenStream2::from_iter(token_streams);
     let gen = quote! {
         {
             #stream
@@ -142,19 +144,19 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
             );
             if is_call_to(expr_call, "extract_taint_ref") {
                 quote! {
-                    { let tmp = #args; unsafe { ::cotaint::Tainted::extract_as_ref(tmp) } }
+                    { let tmp = #args; unsafe { ::cotaint::taint::Tainted::extract_as_ref(tmp) } }
                 }
             } else if is_call_to(expr_call, "extract_taint_mut_ref") {
                 quote! {
-                    { let tmp = #args; unsafe { ::cotaint::Tainted::extract_as_mut_ref(tmp) } }
+                    { let tmp = #args; unsafe { ::cotaint::taint::Tainted::extract_as_mut_ref(tmp) } }
                 }
             } else if is_call_to(expr_call, "extract_taint") {
                 quote! {
-                    { let tmp = #args; unsafe { ::cotaint::Tainted::extract_and_consume(tmp) } }
+                    { let tmp = #args; unsafe { ::cotaint::taint::Tainted::extract_and_consume(tmp) } }
                 }
-            } else if is_call_to(expr_call, "encapsule_taint") {
+            } else if is_call_to(expr_call, "create_taint") {
                 quote! {
-                    { let tmp = #args; unsafe { ::cotaint::Tainted::new(tmp) } }
+                    { let tmp = #args; unsafe { ::cotaint::taint::Tainted::new(tmp) } }
                 }
             } else if is_call_to_allowed_functions(expr_call) {
                 let func = &*expr_call.func;
@@ -427,6 +429,8 @@ fn is_call_to_allowed_functions(call: &syn::ExprCall) -> bool {
         "std::string::String::from".to_string(),
         "std::string::String::len".to_string(),
         "std::string::String::clone".to_string(),
+        // TODO Should push_str be allowed?
+        "std::string::String::push_str".to_string(),
         "std::vec::Vec::clear".to_string(),
         "std::vec::Vec::clone".to_string(),
         "std::vec::Vec::extend_from_slice".to_string(),
