@@ -45,21 +45,21 @@ where
     /*
      * Extract tainted value and consume the tainted struct, called from closure guards
      */
-    pub unsafe fn extract_and_consume<F>(self) -> T {
+    pub unsafe fn extract_and_consume(self) -> T {
         self.val
     }
 
     /*
      * Extract tainted value as reference, called from closure guards
      */
-    pub unsafe fn extract_as_ref<F>(&self) -> &T {
+    pub unsafe fn extract_as_ref(&self) -> &T {
         &self.val
     }
 
     /*
      * Extract tainted value as mutable reference, called from closure guards
      */
-    pub unsafe fn extract_as_mut_ref<F>(&mut self) -> &mut T {
+    pub unsafe fn extract_as_mut_ref(&mut self) -> &mut T {
         &mut self.val
     }
 }
