@@ -1,13 +1,14 @@
 use proc_macro::{TokenStream};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, ToTokens};
+use syn::Stmt;
 use syn::{parse_macro_input, spanned::Spanned, Data, DataStruct, DeriveInput, Expr, Fields, Type, Block, FieldValue, ExprField};
 use syn::parse::{Parse, ParseStream};
 use std::collections::HashSet;
 use std::{iter::FromIterator, str::FromStr};
 use syn::token::Comma;
 
-#[proc_macro]
+/*#[proc_macro]
 pub fn taint_block(input: TokenStream) -> TokenStream {
     // Construct a representation of Rust code as a syntax tree 
     // that we can manipulate
@@ -18,7 +19,7 @@ pub fn taint_block(input: TokenStream) -> TokenStream {
     quote! {
         println!("Hello from taint_block procedural macro");
     }.into()
-}
+}*/
 
 #[proc_macro]
 pub fn taint_block_return(input: TokenStream) -> TokenStream {
@@ -65,7 +66,7 @@ fn taint_block_helper(expr: &syn::Expr) -> TokenStream {
     let body: TokenStream2;
 
     match expr { /* Coccoon uses &*expr, but they also parses the expr (called ast for them) as an ExprClosure, might be different */
-        syn::Expr::Block(expr_block) => body = expand_block(&expr_block.block),
+        Expr::Block(expr_block) => body = expand_block(&expr_block.block),
         _ => body = expand_expr(expr), /* Might need to send in reference here,  */
     }
 
@@ -123,11 +124,45 @@ fn is_call_to(call: &syn::ExprCall, path: &str) -> bool {
 }
 
 fn expand_block(expr_block: &syn::Block) -> TokenStream2 {
-
-
-
-
-    TokenStream2::new()
+    let token_streams: Vec<TokenStream2> = expr_block
+        .stmts
+        .iter()
+        .map(|stmt: &Stmt| -> TokenStream2{
+            match stmt {
+                Stmt::Local(local_expr) => match &local_expr.init {
+                    // Check the right-hand side of a store.
+                    Some((_, expr)) => {
+                        let mut new_expr = local_expr.clone();
+                        let new_init: Expr =
+                            syn::parse(expand_expr(expr).into()).unwrap();
+                        new_expr.init = Some((syn::token::Eq(expr.span()), Box::new(new_init)));
+                        quote! {
+                            #new_expr
+                        }
+                    }
+                    None => local_expr.into_token_stream().into(),
+                },
+                Stmt::Item(item) => {
+                    // Looking at the definition of Item, any Item should be fine.
+                    item.into_token_stream().into()
+                }
+                Stmt::Expr(expr) => expand_expr(expr),
+                Stmt::Semi(expr, _) => {
+                    let expr_tokens = expand_expr(expr);
+                    quote! {
+                        #expr_tokens;
+                    }
+                }
+            }
+        })
+        .collect();
+    let stream: TokenStream2 = TokenStream2::from_iter(token_streams);
+    let gen = quote! {
+        {
+            #stream
+        }
+    };
+    gen.into()
 }
 
 fn expand_expr(expr: &Expr) -> TokenStream2 {
@@ -145,44 +180,39 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
             let args = comma_separate(expr_call.args.iter().map(
                 |arg: &syn::Expr| -> TokenStream2 { expand_expr(arg) },
             ));
-            if is_call_to(expr_call, "unwrap_secret_ref") /*&& secrecy_label.is_some()*/ {
-                //let label = Some(secrecy_label).unwrap();
-                quote::quote! {
-                    //{ let tmp = #args; unsafe { ::secret_structs::secret::Secret::unwrap_unsafe::<#label>(tmp) } }
+            if is_call_to(expr_call, "extract_taint_ref"){
+                quote! {
+                    { let tmp = #args; unsafe { ::cotaint::Tainted::extract_as_ref(tmp) } }
                 }
-            } else if is_call_to(expr_call, "unwrap_secret_mut_ref") /*&& secrecy_label.is_some()*/ {
-                //let label = Some(secrecy_label).unwrap();
-                quote::quote! {
-                    //{ let tmp = #args; unsafe { ::secret_structs::secret::Secret::unwrap_mut_unsafe::<#label>(tmp) } }
+            } else if is_call_to(expr_call, "extract_taint_mut_ref") {
+                quote! {
+                    { let tmp = #args; unsafe { ::cotaint::Tainted::extract_as_mut_ref(tmp) } }
                 }
-            } else if is_call_to(expr_call, "unwrap_secret") /*&& secrecy_label.is_some()*/ {
-                //let label = Some(secrecy_label).unwrap();
-                quote::quote! {
-                    //{ let tmp = #args; unsafe { ::secret_structs::secret::Secret::unwrap_consume_unsafe::<#label>(tmp) } }
+            } else if is_call_to(expr_call, "extract_and_consume") {
+                quote! {
+                    { let tmp = #args; unsafe { ::cotaint::Tainted::extract_and_consume(tmp) } }
                 }
-            } else if is_call_to(expr_call, "wrap_secret") /*&& secrecy_label.is_some()*/ {
-                //let label = Some(secrecy_label).unwrap();
-                quote::quote! {
-                    //{ let tmp = #args; unsafe { ::secret_structs::secret::Secret::<_,#label>::new(tmp) } }
+            } else if is_call_to(expr_call, "encapsule_taint") {
+                quote! {
+                    { let tmp = #args; unsafe { ::cotaint::Tainted::new(tmp) } }
                 }
             } else if is_call_to(expr_call, "unchecked_operation") {
                 let expr = expr_call.args.iter().nth(0);
                 if let Some(block) = expr {
-                    quote::quote! {#block}
+                    quote! {#block}
                 } else {
-                    quote::quote! {compile_error!("unchecked_operation needs an operation.");}
+                    quote! {compile_error!("unchecked_operation needs an operation.");}
                 }
             } else if is_call_to_allowed_functions(expr_call) {
                 let func = &*expr_call.func;
-                quote::quote! {
+                quote! {
                     #func(#args)
                 }
             } else {
                 let func = &*expr_call.func;
-                // TODO: Shouldn't evaluate #args inside of unsafe block
-                quote::quote! {
-                    //(unsafe { (#func(#args) as ::secret_structs::secret::Vetted<_>).unwrap() })
-                }
+                quote! {
+                    { compile_error!("This func is unsupported {:?}", #func) } //Might not print out a pretty result, probably need to extract the function's attributes
+                }.into()
             }
         }
         Expr::Binary(expr_binary) => {
@@ -190,7 +220,7 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
             let lhs = expand_expr(&*expr_binary.left);
             let rhs = expand_expr(&*expr_binary.right);
             let op = expr_binary.op;
-            quote::quote! {
+            quote! {
                 #lhs #op #rhs
             }
         }
@@ -202,7 +232,7 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
             let rhs: TokenStream2 =
                 expand_expr(&assign_expr.right).into();
             // Don't need not_mut_secret here since it's already in the duplicate (i.e., check_expr) path
-            quote::quote! {
+            quote! {
                 (#lhs = #rhs)
             }
         }
@@ -213,7 +243,7 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
                 expand_expr(&assign_op_expr.right).into();
             let op = assign_op_expr.op;
             // Don't need not_mut_secret here since the duplicate (i.e., check_expr) path ensures built-in numeric/string types
-            quote::quote! {
+            quote! {
                 (#lhs #op #rhs)
             }
         }
@@ -226,19 +256,19 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
             let method = &method_call_expr.method;
             let turbofish = &method_call_expr.turbofish;
             // TODO: Shouldn't evaluate #args inside of unsafe block -- ADDED WHITESPACE AFTER METHOD, caused error
-            quote::quote! {
+            quote! {
                 //(unsafe { (#receiver.#method #turbofish(#args) as ::secret_structs::secret::Vetted<_>).unwrap() })
             }
         }
         Expr::If(expr_if) => {
             let condition = expand_expr(&*expr_if.cond);
-            let then_block: proc_macro2::TokenStream =
+            let then_block: TokenStream2 =
                 expand_block(&expr_if.then_branch).into();
             let else_branch = match &expr_if.else_branch {
                 Some(block) => expand_expr(&*block.1),
-                None => quote::quote! {},
+                None => quote! {},
             };
-            quote::quote! {
+            quote! {
                 if #condition {
                     #then_block
                 } else {
@@ -248,7 +278,7 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
         }
         Expr::Field(field_access) => {
             let e: Expr  = syn::parse2(expand_expr(&(field_access.base))).expect("ErrS");
-            let e2: Expr = syn::parse2(quote::quote!{ (#e) }).expect("ErrS");
+            let e2: Expr = syn::parse2(quote!{ (#e) }).expect("ErrS");
             let e3: Box<Expr> = Box::new(e2);
             let f_new = ExprField {
                 attrs: field_access.attrs.clone(),
@@ -263,7 +293,7 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
             let pat = for_loop.pat.clone().into_token_stream();
             let expr: TokenStream2 = expand_expr(&*for_loop.expr).into();
             let body: TokenStream2 = expand_block(&for_loop.body).into();
-            quote::quote! {
+            quote! {
                 for #pat in #expr {
                     #body
                 }
@@ -272,7 +302,7 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
         Expr::Index(idx) => {
             let expr: TokenStream2 = expand_expr(&*idx.expr).into();
             let index: TokenStream2 = expand_expr(&*idx.index).into();
-            quote::quote! {
+            quote! {
                 #expr[#index]
             }
         }
@@ -309,12 +339,12 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
             let operand = expand_expr(&*reference.expr);
             match reference.mutability {
                 Some(_) => {
-                    quote::quote! {
+                    quote! {
                         &mut #operand
                     }
                 }
                 _ => {
-                    quote::quote! {
+                    quote! {
                         &#operand
                     }
                 }
@@ -357,17 +387,17 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
         Expr::Unary(unary) => {
             let operand = expand_expr(&*unary.expr);
             let operator = unary.op;
-            quote::quote! {
+            quote! {
                 #operator #operand
             }
         }
         Expr::Unsafe(unsafe_expr) => {
-            quote::quote! {#unsafe_expr}
+            quote! {#unsafe_expr}
         }
         Expr::Cast(cast) => {
             let expr = expand_expr(&*cast.expr);
             let ty = &cast.ty;
-            quote::quote! {
+            quote! {
                 #expr as #ty
             }
         }
@@ -385,7 +415,7 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
                 }
                 _ => {}
             };
-            quote::quote!{(#range_copy)}
+            quote!{(#range_copy)}
         }
         Expr::Repeat(repeat_expr) => {
             let expr = expand_expr(&repeat_expr.expr);
@@ -397,9 +427,9 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
         }
         Expr::Tuple(tuple) => {
             let args = comma_separate(tuple.elems.iter().map(
-                |arg: &syn::Expr| -> proc_macro2::TokenStream { expand_expr(arg) },
+                |arg: &syn::Expr| -> TokenStream2 { expand_expr(arg) },
             ));
-            quote::quote! {
+            quote! {
                 (#args)
             }
         }
@@ -408,7 +438,7 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
                 expand_expr(&*while_loop.cond).into();
             let body: TokenStream2 =
                 expand_block(&while_loop.body).into();
-            quote::quote! {
+            quote! {
                 while #cond {
                     #body
                 }
