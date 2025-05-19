@@ -18,8 +18,12 @@ fn main() {
     let mut my_string = "other".to_string();
     let _my_ret = taint_block_return!({
         std::string::String::push_str(extract_taint_mut_ref(&mut my_var), " taint");
-        std::string::String::push_str(&mut my_string, " taint");
+        //std::string::String::push_str(&mut my_string, " taint");
         create_taint(0)
+    });
+
+    taint_block!({
+        std::string::String::push_str(extract_taint_mut_ref(&mut my_var), " taint");
     });
 
     let my_sanitized = my_var.sanitize(|taint| {

@@ -105,7 +105,10 @@ impl<T: NonTaintValues> !SideEffectFreeCapture for &mut T {}
 impl<T: NonTaintValues> !SideEffectFreeCapture for *mut T {}
 impl<T: ?Sized> !SideEffectFreeCapture for std::cell::UnsafeCell<T> {}
 
-// TODO These should not be needed, check what happens when removed
+/*
+ * Specify that Tainted references implement SideEffectFreeCapture and thus okay to capture in
+ * closure guards.
+ */
 unsafe impl<T: SafeTaintValue> SideEffectFreeCapture for &mut Tainted<T> {}
 unsafe impl<T: SafeTaintValue> SideEffectFreeCapture for &mut &mut Tainted<T> {}
 

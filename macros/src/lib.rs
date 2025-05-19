@@ -12,13 +12,9 @@ use syn::{
 pub fn source(input: TokenStream) -> TokenStream {
     // Construct a representation of Rust code as a syntax tree
     // that we can manipulate
-    let expr = syn::parse(input).unwrap();
+    let expr: syn::Expr = syn::parse(input).unwrap();
 
-    // Build the trait implementation
-    impl_source_macro(&expr)
-}
-
-fn impl_source_macro(expr: &syn::Expr) -> TokenStream {
+    // Wrap the returned expression in a Tainted type
     let gen = quote! {
         unsafe {
             ::cotaint::taint::Tainted::<_>::new(#expr)
@@ -158,15 +154,16 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
                 quote! {
                     { let tmp = #args; unsafe { ::cotaint::taint::Tainted::new(tmp) } }
                 }
-            } else if is_call_to_allowed_functions(expr_call) {
+            } else if is_call_to_allowed_function(expr_call) {
                 let func = &*expr_call.func;
                 quote! {
                     #func(#args)
                 }
             } else {
                 let func = &*expr_call.func;
+                //Might not print out a pretty result, probably need to extract the function's attributes
                 quote! {
-                    { compile_error!("This func is unsupported {:?}", #func) } //Might not print out a pretty result, probably need to extract the function's attributes
+                    { compile_error!("This func is unsupported {:?}", #func) }
                 }
                 .into()
             }
@@ -182,23 +179,26 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
         }
         Expr::Block(expr_block) => expand_block(&expr_block.block).into(),
         Expr::Continue(continue_stmt) => continue_stmt.into_token_stream(),
+        // All assignment operations are allowed because we only have one secrecy level, no
+        // implicit flows from different tainted variables can occur.
         Expr::Assign(assign_expr) => {
             let lhs: TokenStream2 = expand_expr(&assign_expr.left).into();
             let rhs: TokenStream2 = expand_expr(&assign_expr.right).into();
-            // Don't need not_mut_secret here since it's already in the duplicate (i.e., check_expr) path
             quote! {
                 (#lhs = #rhs)
             }
         }
+        // All assignment operations are allowed because we only have one secrecy level, no
+        // implicit flows from different tainted variables can occur.
         Expr::AssignOp(assign_op_expr) => {
             let lhs: TokenStream2 = expand_expr(&assign_op_expr.left).into();
             let rhs: TokenStream2 = expand_expr(&assign_op_expr.right).into();
             let op = assign_op_expr.op;
-            // Don't need not_mut_secret here since the duplicate (i.e., check_expr) path ensures built-in numeric/string types
             quote! {
                 (#lhs #op #rhs)
             }
         }
+        // CONTINUE HERE WITH INVESTIGATION
         Expr::MethodCall(method_call_expr) => {
             let receiver: TokenStream2 = expand_expr(&method_call_expr.receiver).into();
             let args = comma_separate(
@@ -420,8 +420,7 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
 }
 
 //TODO Write docs
-// Code from Cocooon
-fn is_call_to_allowed_functions(call: &syn::ExprCall) -> bool {
+fn is_call_to_allowed_function(call: &syn::ExprCall) -> bool {
     let allowed_functions = HashSet::from([
         "std::option::Option::unwrap".to_string(),
         "std::slice::Iter::copied".to_string(),
