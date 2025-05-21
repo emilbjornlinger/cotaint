@@ -198,22 +198,6 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
                 (#lhs #op #rhs)
             }
         }
-        // CONTINUE HERE WITH INVESTIGATION
-        Expr::MethodCall(method_call_expr) => {
-            let receiver: TokenStream2 = expand_expr(&method_call_expr.receiver).into();
-            let args = comma_separate(
-                method_call_expr
-                    .args
-                    .iter()
-                    .map(|arg: &syn::Expr| -> TokenStream2 { expand_expr(arg) }),
-            );
-            let method = &method_call_expr.method;
-            let turbofish = &method_call_expr.turbofish;
-            // TODO: Shouldn't evaluate #args inside of unsafe block -- ADDED WHITESPACE AFTER METHOD, caused error
-            quote! {
-                //(unsafe { (#receiver.#method #turbofish(#args) as ::secret_structs::secret::Vetted<_>).unwrap() })
-            }
-        }
         Expr::If(expr_if) => {
             let condition = expand_expr(&*expr_if.cond);
             let then_block: TokenStream2 = expand_block(&expr_if.then_branch).into();
@@ -242,8 +226,10 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
             f_new.into_token_stream()
         }
         Expr::ForLoop(for_loop) => {
-            // TODO: Does #pat need expansion?
-            let pat = for_loop.pat.clone().into_token_stream();
+            let pat = match &for_loop.pat {
+                syn::Pat::Macro(_pat_macro) => quote! {compile_error!("Cannot use macro in taint_block")},
+                other_expr => other_expr.clone().into_token_stream(),
+            };
             let expr: TokenStream2 = expand_expr(&*for_loop.expr).into();
             let body: TokenStream2 = expand_block(&for_loop.body).into();
             quote! {
@@ -328,7 +314,7 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
                 attrs: struct_literal.attrs.clone(),
                 path: struct_literal.path.clone(),
                 brace_token: struct_literal.brace_token.clone(),
-                fields: fields,
+                fields,
                 dot2_token: struct_literal.dot2_token.clone(),
                 rest: struct_literal.rest.clone(),
             };
@@ -391,9 +377,11 @@ fn expand_expr(expr: &Expr) -> TokenStream2 {
                 }
             }
         }
-        _expr => {
+        expr => {
+            let expr = expr.into_token_stream().to_string();
+            let error = format!("This expression is unsupported: {}", expr);
             quote! {
-                { compile_error!("This expr is unsupported {:?}", _expr) } //Might not print out a pretty result, probably need to extract the expression's attributes
+                { compile_error!(#error) } 
             }
             .into()
         } /*
@@ -428,7 +416,6 @@ fn is_call_to_allowed_function(call: &syn::ExprCall) -> bool {
         "std::string::String::from".to_string(),
         "std::string::String::len".to_string(),
         "std::string::String::clone".to_string(),
-        // TODO Should push_str be allowed?
         "std::string::String::push_str".to_string(),
         "std::vec::Vec::clear".to_string(),
         "std::vec::Vec::clone".to_string(),
