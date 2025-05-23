@@ -125,7 +125,3 @@ impl<T: ?Sized> !Immutable for &mut T {}
  */
 pub unsafe trait SafeTaintValue {}
 unsafe impl<T> SafeTaintValue for T where T: Immutable {}
-
-// TODO Use this as the SecretTrait is used in Cocoon if compilation errors when trying to return the
-// unit type, or just leave as is and have it as a restriction, must return one Tainted variable
-//pub unsafe trait TaintTrait {}
