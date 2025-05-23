@@ -16,6 +16,8 @@ https://doc.rust-lang.org/book/appendix-07-nightly-rust.html
 
 Examples that tests the functionality of the cotaint library can be found in the cotaint/src/bin folder. Here, different code blocks are tested to ensure that the taint_block() macro can handle different types of code blocks. In the different example files there are examples illustrating compiling and non-compiling code snippets.
 
+When running the tests below, the compiling examples are supposed to compile and output something. The expected output is written as a comment in the file. No `assert`s or similar test infrastructure is used. The non-compiling examples are simply expected not to compile, and the error message given from the compiler should explain why the code in the example is disallowed.
+
 Note, not all in-built functions in Rust are supported by the library. The supported functions can be found in cotaint/macros/src/lib.rs and is listed in the function: is_call_to_allowed_function(). 
 
 ## Usage
